@@ -1,0 +1,32 @@
+[project]
+name = "scheduler-agent"
+version = "0.1.0"
+description = "Personal Work Scheduler: Feishu bot that estimates, checks capacity, and schedules work blocks"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "lark-oapi>=1.7.3,<2",
+    "anthropic>=0.40",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6",
+    "python-ulid>=2",
+]
+
+[project.scripts]
+scheduler-agent = "scheduler_agent.main:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"

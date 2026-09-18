@@ -1,0 +1,16 @@
+# Personal work rules (PRD 4.4 / D05). These are Agent guesses — edit to match reality.
+rules:
+  timezone: Asia/Shanghai
+  work_days: [0, 1, 2, 3, 4]          # Mon..Fri
+  work_hours: { start: "10:00", end: "19:00" }
+  lunch: { start: "12:30", end: "14:00" }
+  daily_task_cap_hours: 6
+  daily_buffer_hours: 1
+  min_block_hours: 1
+  max_block_hours: 2.5
+  meeting_buffer_minutes: 15
+  allow_overtime_by_default: false
+  protected_slots: []                 # e.g. - { weekdays: [4], start: "17:00", end: "19:00", label: 个人项目 }
+  planning_horizon_days: 14
+  draft_ttl_hours: 24
+  event_dedup_days: 7
