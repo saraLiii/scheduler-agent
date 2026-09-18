@@ -14,6 +14,7 @@ from scheduler_agent.feishu.errors import FeishuPermissionError
 from scheduler_agent.scheduler import capacity_report, merge
 from scheduler_agent.store.repo import OpsLog, TaskRepo
 
+from .drafts import DraftService
 from .llm import LLMProvider, ToolSpec
 from .prompts import DECOMPOSE_INSTRUCTIONS
 
@@ -26,6 +27,7 @@ class ToolContext:
     calendar: CalendarAdapter
     ops: OpsLog
     llm: LLMProvider
+    drafts: DraftService | None = None
     now: datetime | None = None
 
     def clock(self) -> datetime:
@@ -71,6 +73,18 @@ SPECS: list[ToolSpec] = [
                        "status": {"type": "string", "enum": ["inbox", "ready", "scheduled", "in_progress", "blocked", "done", "cancelled"]},
                        "note": {"type": "string"}, "commit_deadline": {"type": "string", "description": "YYYY-MM-DD，仅当 Sara 明确承诺"},
                        "override_estimate": {"type": "array", "items": {"type": "number"}, "description": "[min,max] Sara 覆盖估算"}}}),
+]
+
+
+SPECS += [
+    ToolSpec("simulate_schedule", "为指定任务生成排期草案（不写日历）。返回草案 ID、逐日时间块、未排入工时。Sara 回复「确认」后才写入。", {
+        "type": "object", "required": ["task_ids"],
+        "properties": {"task_ids": {"type": "array", "items": {"type": "string"}, "description": "父任务或子任务 ID"},
+                       "horizon_days": {"type": "integer", "description": "向后排多少天，默认配置值"},
+                       "allow_overtime": {"type": "boolean", "description": "仅当 Sara 本轮明确说允许加班时为 true"}}}),
+    ToolSpec("reschedule_task", "进度变化后重排某任务的未来已确认块：生成新草案并标记要替换的旧块。确认后旧块删除、新块写入。", {
+        "type": "object", "required": ["task_id"],
+        "properties": {"task_id": {"type": "string"}, "horizon_days": {"type": "integer"}, "allow_overtime": {"type": "boolean"}}}),
 ]
 
 
@@ -210,3 +224,35 @@ class Tools:
                 self.ctx.tasks.save(replace(parent, remaining_hours=round(sum(x.remaining for x in siblings), 1)), check_stale=False)
         self.ctx.ops.write("update_task_progress", "success", target=task_id, detail={"before": before, "after": _task_view(saved)})
         return {"before": before, "after": _task_view(saved), "reschedule_needed": remaining_hours is not None or status in {"done", "cancelled", "blocked"}}
+
+    # --- R2/R3: drafts ---
+    def t_simulate_schedule(self, task_ids: list[str], horizon_days: int | None = None, allow_overtime: bool = False) -> dict[str, Any]:
+        if not self.ctx.drafts:
+            return {"error": "排期服务未初始化"}
+        try:
+            d = self.ctx.drafts.build(task_ids, horizon_days, allow_overtime)
+        except FeishuPermissionError as e:
+            return {"error": "calendar_permission", "message": str(e)}
+        return {"draft_id": d.draft_id, "expires_at": d.expires_at.isoformat(), "blocks": len(d.blocks), "gap_hours": d.gap_hours,
+                "unscheduled": d.unscheduled, "summary": d.summary,
+                "instruction": "把 summary 原样展示给 Sara，并告诉她回复「确认」写入日历、「取消」放弃。缺口不为 0 时明确说明。"}
+
+    def t_reschedule_task(self, task_id: str, horizon_days: int | None = None, allow_overtime: bool = False) -> dict[str, Any]:
+        if not self.ctx.drafts:
+            return {"error": "排期服务未初始化"}
+        from scheduler_agent.domain.models import DraftKind
+        now = self.ctx.clock()
+        t = self.ctx.tasks.get(task_id)
+        if not t:
+            return {"error": f"任务 {task_id} 不存在"}
+        ids = [task_id]
+        children = [x for x in self.ctx.tasks.list_all() if x.parent_id == task_id]
+        leaf_ids = [c.task_id for c in children] or [task_id]
+        old = [b for lid in leaf_ids for b in self.ctx.drafts.blocks.future_confirmed_for(lid, now)]
+        try:
+            d = self.ctx.drafts.build(ids, horizon_days, allow_overtime, kind=DraftKind.RESCHEDULE, replaces=old)
+        except FeishuPermissionError as e:
+            return {"error": "calendar_permission", "message": str(e)}
+        return {"draft_id": d.draft_id, "replaces_blocks": len(old), "blocks": len(d.blocks), "gap_hours": d.gap_hours,
+                "unscheduled": d.unscheduled, "summary": d.summary,
+                "instruction": "说明将取消多少旧块、新排多少块、计划完成日是否变化，并请 Sara 回复「确认」或「取消」。"}

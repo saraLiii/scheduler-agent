@@ -117,6 +117,13 @@ class DraftRepo:
         opens = [d for d in self.load_open() if d.status == DraftStatus.DRAFT]
         return max(opens, key=lambda d: d.created_at) if opens else None
 
+    def latest_partial(self) -> Draft | None:
+        rows = self._gw.search("drafts", {"conjunction": "and", "conditions": [{"field_name": "status", "operator": "is", "value": ["partial"]}]})
+        ds = [fields_to_draft(r.record_id, r.fields, self._tz) for r in rows]
+        for d in ds:
+            self._cache[d.draft_id] = d
+        return max(ds, key=lambda d: d.created_at) if ds else None
+
     def load_open(self) -> list[Draft]:
         """Startup recovery: all drafts still in `draft` state."""
         out = []

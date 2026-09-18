@@ -2,7 +2,12 @@ from datetime import date
 from zoneinfo import ZoneInfo
 
 from scheduler_agent.domain.models import Draft, DraftKind, Task, TaskStatus, TimeBlock
-from scheduler_agent.store.mapping import draft_to_fields, fields_to_draft, fields_to_task, task_to_fields
+from scheduler_agent.store.mapping import (
+    draft_to_fields,
+    fields_to_draft,
+    fields_to_task,
+    task_to_fields,
+)
 from tests.conftest import MON, dt
 
 TZ = ZoneInfo("Asia/Shanghai")

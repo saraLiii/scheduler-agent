@@ -13,6 +13,9 @@ from .tools import SPECS, Tools
 log = logging.getLogger(__name__)
 
 RESERVED = {"列任务", "任务列表", "我的任务"}
+CONFIRM = {"确认", "确定", "ok", "OK", "好", "可以"}
+CANCEL = {"取消", "不要", "算了"}
+RETRY = {"重试"}
 
 
 @dataclass
@@ -35,6 +38,8 @@ class Orchestrator:
         text = text.strip()
         if text in RESERVED:  # deterministic path works even when LLM is down
             return self._render_tasks(self._tools.t_list_tasks())
+        if text in CONFIRM | CANCEL | RETRY:
+            return self._handle_draft_word(user, text)
         s = self.session(user)
         s.history.append({"role": "user", "content": text})
         try:
@@ -56,6 +61,28 @@ class Orchestrator:
             log.exception("llm failed")
             s.history.pop()  # drop the dangling user turn
             raise LLMUnavailable(str(e)) from e
+
+    def _handle_draft_word(self, user: str, text: str) -> str:
+        svc = self._tools.ctx.drafts
+        if svc is None:
+            return "排期服务未初始化。"
+        if text in RETRY:
+            p = svc.drafts.latest_partial()
+            if not p:
+                return "没有需要重试的部分失败草案。"
+            _, msg = svc.confirm(p.draft_id)
+        else:
+            d = svc.drafts.latest_open()
+            if not d:
+                return "当前没有待确认的草案。" + ("" if text in CANCEL else "先让我为某个任务排期。")
+            if text in CANCEL:
+                msg = svc.cancel(d.draft_id)
+            else:
+                _, msg = svc.confirm(d.draft_id)
+        s = self.session(user)  # keep the LLM aware of what just happened
+        s.history.append({"role": "user", "content": f"[系统] Sara 回复「{text}」，处理结果：{msg}"})
+        s.history.append({"role": "assistant", "content": [{"type": "text", "text": msg}]})
+        return msg
 
     @staticmethod
     def _render_tasks(res: dict[str, Any]) -> str:

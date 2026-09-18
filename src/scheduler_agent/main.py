@@ -10,6 +10,7 @@ from scheduler_agent.config.settings import load_config
 
 
 def _wire(cfg):
+    from scheduler_agent.agent.drafts import DraftService
     from scheduler_agent.agent.llm import AnthropicProvider
     from scheduler_agent.agent.orchestrator import Orchestrator
     from scheduler_agent.agent.tools import ToolContext, Tools
@@ -18,7 +19,7 @@ def _wire(cfg):
     from scheduler_agent.feishu.messaging import Messenger
     from scheduler_agent.store.bitable import BitableGateway
     from scheduler_agent.store.bootstrap import list_tables
-    from scheduler_agent.store.repo import EventDedup, OpsLog, TaskRepo
+    from scheduler_agent.store.repo import BlockRepo, DraftRepo, EventDedup, OpsLog, TaskRepo
 
     s = cfg.secrets
     tz = ZoneInfo(cfg.rules.timezone)
@@ -28,7 +29,9 @@ def _wire(cfg):
     tasks, ops = TaskRepo(gw, tz), OpsLog(gw, tz)
     cal = CalendarAdapter(client, s.feishu_calendar_id or None, s.feishu_owner_open_id)
     llm = AnthropicProvider(s.anthropic_api_key, s.anthropic_model)
-    tools = Tools(ToolContext(cfg.rules, tz, tasks, cal, ops, llm))
+    drafts = DraftService(cfg.rules, tz, tasks, BlockRepo(gw, tz), DraftRepo(gw, tz), cal, ops)
+    drafts.drafts.load_open()  # startup recovery: unexpired drafts can still be confirmed
+    tools = Tools(ToolContext(cfg.rules, tz, tasks, cal, ops, llm, drafts))
     orch = Orchestrator(llm, tools)
     dedup = EventDedup(gw, tz, cfg.rules.event_dedup_days)
     return client, gw, tasks, cal, Messenger(client, s.feishu_owner_open_id), orch, dedup
